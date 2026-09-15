@@ -26,19 +26,19 @@ public:
                                  Eigen::Matrix<double, 4, 1>& c,
                                  const Params& p, double v_x, double kappa_ref)
     {
-        // --- Parse state and input ---
+        // Parse state and input
         double y     = x.y;
         double v_y   = x.v_y;
         double psi   = x.psi;
         double r     = x.r;
         double delta = u.delta;
 
-        // --- Initialize matrices ---
+        // Initialize matrices
         A.setZero();
         B.setZero();
         c.setZero();
 
-        // --- A matrix ---
+        // A matrix
         A(0,0) = 0.0;
         A(0,1) = 1.0;
         A(0,2) = v_x;
@@ -59,14 +59,13 @@ public:
         A(3,2) = 0.0;
         A(3,3) = (p.l_f * p.l_f * p.C_f + p.l_r * p.l_r * p.C_r) / (p.I_z * v_x);
 
-
-        // --- B matrix ---
+        // B matrix
         B(0,0) = 0.0;
         B(1,0) = -p.C_f / p.m;
         B(2,0) = 0.0;
         B(3,0) = -p.l_f * p.C_f / p.I_z;
 
-        //xdot (DYNAMIC BICCYLE MODEL EQUATIONS BELOW)
+        // Dynamic bicycle model equations (xdot)
         State f;
 
         // Slip angles
@@ -83,7 +82,8 @@ public:
         // Continuous dynamics (xdot)
         f.y   = v_y;
         f.v_y = (Fy_f * std::cos(u.delta) + Fy_r) / p.m - v_x * r;
-        // Heading-error dynamics in curvilinear coordinates.
+        
+        // Heading-error dynamics in curvilinear coordinates
         f.psi = r - v_x * kappa_ref;
         f.r   = Mz / p.I_z;
 
@@ -120,20 +120,21 @@ public:
         const std::vector<double>& x_params = spline.x_params;
         const std::vector<double>& y_params = spline.y_params;
 
-        const double dt_pub = 0.01; // time step for updating s0 based on current velocity and MPC publish rate
+        // Time step for updating s0 based on current velocity and MPC publish rate
+        const double dt_pub = 0.01; 
 
-        // === Reference containers ===
+        // Reference containers
         Eigen::VectorXd x_ref_vec(NX * N);
         std::vector<double> delta_ref(N, 0.0);
-        std::vector<std::pair<double, double>> path_points; //for viz
+        std::vector<std::pair<double, double>> path_points; // for viz
         path_points.reserve(N);
 
-        // === Vehicle geometry ===
+        // Vehicle geometry
         const double Lf = 0.811;  // front axle to CoG [m]
         const double Lr = 0.719;  // rear axle to CoG [m]
         const double L  = Lf + Lr; // wheelbase
 
-        // === computes the new starting point for the available spline ===
+        // Compute the new starting point for the available spline
         {
           // Horner's Method for 1st derivative
           double dx_ds0 = (((5*x_params[0]*s0 + 4*x_params[1])*s0 + 3*x_params[2])*s0 + 2*x_params[3])*s0 + x_params[4];
@@ -153,23 +154,22 @@ public:
         }
 
         double s = s0;
-        // === from s0, discretize along the spline and compute reference states and inputs ===
+        
+        // Discretize along the spline from s0 and compute reference states and inputs
         for (int i = 0; i < N; ++i){
-              // --- Compute local derivatives wrt s ---
-              // Horner's Method
+              // Compute local derivatives wrt s using Horner's Method
               double dx_ds = (((5*x_params[0]*s + 4*x_params[1])*s + 3*x_params[2])*s + 2*x_params[3])*s + x_params[4];
               double dy_ds = (((5*y_params[0]*s + 4*y_params[1])*s + 3*y_params[2])*s + 2*y_params[3])*s + y_params[4];
 
-              // --- Compute local arc-length scaling ---
+              // Compute local arc-length scaling
               double d2 = dx_ds*dx_ds + dy_ds*dy_ds;
               double deriv_mag = std::sqrt(d2);
 
-              double max_ds = 0.04; //max step along spline to avoid overshoot
+              double max_ds = 0.04; // max step along spline to avoid overshoot
               double ds_arc = (v_x * dt) / deriv_mag;
               ds_arc = std::clamp(ds_arc, 0.0, max_ds);
 
-              // Distance of x and y params from car
-              // Horner's Method
+              // Distance of x and y params from car (Horner's Method)
               double x_path = (((((x_params[0]*s + x_params[1])*s + x_params[2])*s + x_params[3])*s + x_params[4])*s + x_params[5]);
               double y_path = (((((y_params[0]*s + y_params[1])*s + y_params[2])*s + y_params[3])*s + y_params[4])*s + y_params[5]);
 
@@ -197,19 +197,18 @@ public:
               double max_kappa = std::tan(1.5) / L;
               kappa = std::clamp(kappa, -max_kappa, max_kappa);
 
-              // === Reference steering from curvature ===
+              // Reference steering from curvature
               delta_ref[i] = std::atan(L * kappa);
 
-              // === Reference yaw rate ===
+              // Reference yaw rate
               double r_ref = v_x * kappa;
               double max_r = 5.0;  // rad/s absolute safety limit
               r_ref = std::clamp(r_ref, -max_r, max_r);
 
-              // === Pack state reference vector [e_y, v_y, e_psi, r] ===
-              // UPDATED: Tracking zero error
+              // Pack state reference vector [e_y, v_y, e_psi, r] (tracking zero error)
               x_ref_vec.segment(i * NX, NX) << 0.0, 0.0, 0.0, r_ref;
 
-              // --- Advance along spline ---
+              // Advance along spline
               s = std::clamp(s + ds_arc, 0.0, 1.0);
           }
 
@@ -228,14 +227,15 @@ double ControllerNode::getPrevD(){
 utfr_msgs::msg::TargetState
 ControllerNode::LTVMPC(const utfr_msgs::msg::ParametricSpline& spline, utfr_msgs::msg::VelocityProfile &velocity_profile, utfr_msgs::msg::EgoState &ego_state_new){
 
-    // === Extract vehicle velocity from ego_state_new === (safe guard)
+    // Extract vehicle velocity from ego_state_new (safe guard)
     double v_x = ego_state_new.vel.twist.linear.x;
-    // minimum velocity to avoid numerical issues in linearization and QP
+    
+    // Minimum velocity to avoid numerical issues in linearization and QP
     if (v_x < 3.5){
       v_x = 3.5;
     }
 
-    // === Calculate Initial Errors at s0 ===
+    // Calculate initial errors at s0
     double dx_ds0 = (((5*spline.x_params[0]*s0 + 4*spline.x_params[1])*s0 + 3*spline.x_params[2])*s0 + 2*spline.x_params[3])*s0 + spline.x_params[4];
     double dy_ds0 = (((5*spline.y_params[0]*s0 + 4*spline.y_params[1])*s0 + 3*spline.y_params[2])*s0 + 2*spline.y_params[3])*s0 + spline.y_params[4];
 
@@ -262,7 +262,7 @@ ControllerNode::LTVMPC(const utfr_msgs::msg::ParametricSpline& spline, utfr_msgs
     double psi_path_s0 = std::atan2(dy_ds0, dx_ds0) + dpsi;
     double psi_err_initial = -psi_path_s0; // Car is at yaw 0 in its own frame
 
-    // === Vehicle parameters ===
+    // Vehicle parameters
     MPC::Params params;
     params.m   = 200.0;                      // sprung_mass [kg]
     params.I_z = 110.0;                      // Izz [kg*m^2]
@@ -271,16 +271,17 @@ ControllerNode::LTVMPC(const utfr_msgs::msg::ParametricSpline& spline, utfr_msgs
     params.C_f = -560.0 * (180.0 / M_PI);    // C_f tire cornering coefficient [N/rad]
     params.C_r = -560.0 * (180.0 / M_PI);    // C_r tire cornering coefficient [N/rad]
 
-    // === Initial state (Error formulation) ===
+    // Initial state (Error formulation)
     MPC::State x0;
     x0.y   = -y_err_initial; // e_y
     x0.v_y = ego_state_new.vel.twist.linear.y;
     x0.psi = psi_err_initial; // e_psi
-    // initial yaw rate from prev. steering.
+    
+    // Initial yaw rate from previous steering
     double len = params.l_f + params.l_r;
     x0.r   = (v_x * getPrevD()) / ((len) + (((params.m * v_x * v_x) / len)) * ((params.l_f/params.C_f)-(params.l_r/params.C_r))); 
 
-    // === Allocate QP matrices ===
+    // Allocate QP matrices
     Eigen::VectorXd g = Eigen::VectorXd::Zero(nVar);
     Eigen::MatrixXd Aeq = Eigen::MatrixXd::Zero(nConstraintsX, nVar);
     Eigen::VectorXd beq = Eigen::VectorXd::Zero(nConstraintsX);
@@ -288,11 +289,11 @@ ControllerNode::LTVMPC(const utfr_msgs::msg::ParametricSpline& spline, utfr_msgs
     Eigen::VectorXd lbAineq = Eigen::VectorXd::Zero(nConstraintsU);
     Eigen::VectorXd ubAineq = Eigen::VectorXd::Zero(nConstraintsU);
 
-    // Anchor the first predicted state to the measured initial error state.
+    // Anchor the first predicted state to the measured initial error state
     Aeq.block(0, 0, NX, NX) = Eigen::MatrixXd::Identity(NX, NX);
     beq.segment(0, NX) << x0.y, x0.v_y, x0.psi, x0.r;
 
-    // === Build reference trajectory ===
+    // Build reference trajectory
     Eigen::VectorXd x_ref_vec;
     std::vector<double> delta_ref;
     std::vector<std::pair<double, double>> path_points;
@@ -302,16 +303,17 @@ ControllerNode::LTVMPC(const utfr_msgs::msg::ParametricSpline& spline, utfr_msgs
     g.setZero(nVar);
     g.head(N * NX) = -2.0 * Qblk * x_ref_vec;
 
-    //Previous control input
+    // Previous control input
     double delta_prev = getPrevD();
     Eigen::VectorXd d_prev = Eigen::VectorXd::Zero(N);
     d_prev(0) = delta_prev;
     g.segment(N * NX, N * NU) = -2.0 * D.transpose() * Rblk * d_prev;
 
-    // === Visualize reference and actual points (from prev. iteration) === 
+    // Visualize reference and actual points (from prev. iteration)
     visualization_msgs::msg::Marker ref_points_marker;
     visualization_msgs::msg::Marker prev_mpc_marker;
-    // convert frenet frame into baselink
+    
+    // Convert frenet frame into baselink
     std::vector<std::pair<double, double>> prev_mpc_points;
     if (has_prev_mpc_solution_) {
       prev_mpc_points.reserve(N);
@@ -335,7 +337,7 @@ ControllerNode::LTVMPC(const utfr_msgs::msg::ParametricSpline& spline, utfr_msgs
     }
     vizPoints(ref_points_marker, prev_mpc_marker, N, path_points, prev_mpc_points);
 
-    // === Linearization around reference ===
+    // Linearization around reference
     for (int i = 0; i < N-1; ++i) {
         Eigen::Matrix<double, NX, NX> A;
         Eigen::Matrix<double, NX, NU> B;
@@ -363,15 +365,16 @@ ControllerNode::LTVMPC(const utfr_msgs::msg::ParametricSpline& spline, utfr_msgs
         Aeq.block(row, N*NX + i*NU, NX, NU) = -B_d;
         beq.segment(row, NX) = c_d;
     }
+    
     // Fill inequality constraints for steering rate limits: |delta_k - delta_{k-1}| <= max_delta_rate
-    //      - assumes we can go from left lock to right lock in 0.5s
+    // Assumes we can go from left lock to right lock in 0.5s
     Aineq.block(0, N*NX, nConstraintsU, N*NU) = D;
     lbAineq = Eigen::VectorXd::Constant(nConstraintsU, -dt_*1.4); // left -> right takes 1s
     lbAineq(0) = -max_steering_angle_; // rely on PI controllers in sim instead of bounding initial steering input to a range.
     ubAineq = Eigen::VectorXd::Constant(nConstraintsU, dt_*1.4);
     ubAineq(0) =  max_steering_angle_; 
 
-    // === Variable bounds (steering) ===
+    // Variable bounds (steering)
     Eigen::VectorXd lb = -1e5 * Eigen::VectorXd::Ones(nVar);
     Eigen::VectorXd ub =  1e5 * Eigen::VectorXd::Ones(nVar);
     for (int i = 0; i < N; ++i) {
@@ -382,10 +385,10 @@ ControllerNode::LTVMPC(const utfr_msgs::msg::ParametricSpline& spline, utfr_msgs
         double len = params.l_f + params.l_r;
         double max_yaw_rate = (v_x * max_steering_angle_) / ((len) + (((params.m * v_x * v_x) / len)) * ((params.l_f/params.C_f)-(params.l_r/params.C_r))); 
         lb(idx + 3) = -max_yaw_rate; // max yaw rate  [rad/s] (velocity dependent max yaw rate)
-        ub(idx + 3) =  max_yaw_rate; // min yaw rate  [rad/s]
+        ub(idx + 3) =  max_yaw_rate; // min yaw rate  [rad/s] // NOTE: logic mismatch based on original comment, preserved as is.
     }
 
-    // === Solve QP ===
+    // Solve QP
     if(!has_prev_mpc_solution_) {
       proxqp_->init(H, g, Aeq, beq, Aineq, lbAineq, ubAineq); // start new solution
       proxqp_->solve();
@@ -394,13 +397,14 @@ ControllerNode::LTVMPC(const utfr_msgs::msg::ParametricSpline& spline, utfr_msgs
       proxqp_->solve();
     }
     auto result = proxqp_->results.info.status;
-    //Initialize TargetState
+    
+    // Initialize TargetState
     utfr_msgs::msg::TargetState target;
     if (result == proxsuite::proxqp::QPSolverOutput::PROXQP_SOLVED) {
         Eigen::Map<Eigen::VectorXd>(x_opt_, nVar) = proxqp_->results.x;        
         has_prev_mpc_solution_ = true;
         double steering = x_opt_[N * NX]; // first control input (steering)
-        steering = std::clamp(steering, -max_steering_angle_, max_steering_angle_); //safety clamp max steering
+        steering = std::clamp(steering, -max_steering_angle_, max_steering_angle_); // safety clamp max steering
         target.steering_angle = steering;
         setPrevD(steering);
         RCLCPP_INFO(this->get_logger(), "Optimal steering = %f. solve time: %f", 
@@ -408,6 +412,7 @@ ControllerNode::LTVMPC(const utfr_msgs::msg::ParametricSpline& spline, utfr_msgs
     } else {
         RCLCPP_WARN(this->get_logger(), "QP failed: %d", result);
         has_prev_mpc_solution_ = false;
+        
         // Get primal solution even on failure
         Eigen::VectorXd z = proxqp_->results.x;
         if(solver_debug_) {
@@ -415,7 +420,7 @@ ControllerNode::LTVMPC(const utfr_msgs::msg::ParametricSpline& spline, utfr_msgs
 
             Eigen::VectorXd Ax_eq = Aeq * z;
             Eigen::VectorXd Ax_ineq = Aineq * z;
-            RCLCPP_ERROR(this->get_logger(), "=== CONSTRAINT VIOLATION REPORT ===");
+            RCLCPP_ERROR(this->get_logger(), "Constraint violation report");
             for (int i = 0; i < nConstraintsX; ++i) {
                 double viol = std::abs(Ax_eq(i) - beq(i));
                 if (viol > 1e-4) {
@@ -442,5 +447,4 @@ ControllerNode::LTVMPC(const utfr_msgs::msg::ParametricSpline& spline, utfr_msgs
     splitVelocity(target, velocity_profile, ego_state_new);
 
     return target;
-
 }
